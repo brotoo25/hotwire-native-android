@@ -29,6 +29,8 @@ import dev.hotwire.core.turbo.webview.HotwireWebView
 import dev.hotwire.core.turbo.visit.Visit
 import dev.hotwire.core.turbo.visit.VisitAction
 import dev.hotwire.core.turbo.visit.VisitOptions
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Date
 
 /**
@@ -146,7 +148,8 @@ class Session(
             return false
         }
 
-        logEvent("restoreCurrentVisit",
+        logEvent(
+            "restoreCurrentVisit",
             "location" to visit.location,
             "visitIdentifier" to visit.identifier,
             "restorationIdentifier" to restorationIdentifier
@@ -229,8 +232,9 @@ class Session(
      * @param location The location being visited.
      */
     @JavascriptInterface
-    fun visitStarted(visitIdentifier: String, visitHasCachedSnapshot: Boolean,
-                     visitIsPageRefresh: Boolean, location: String
+    fun visitStarted(
+        visitIdentifier: String, visitHasCachedSnapshot: Boolean,
+        visitIsPageRefresh: Boolean, location: String
     ) {
         logEvent(
             "visitStarted", "location" to location,
@@ -273,7 +277,11 @@ class Session(
      * @param statusCode The HTTP status code that caused the failure.
      */
     @JavascriptInterface
-    fun visitRequestFailedWithStatusCode(visitIdentifier: String, visitHasCachedSnapshot: Boolean, statusCode: Int) {
+    fun visitRequestFailedWithStatusCode(
+        visitIdentifier: String,
+        visitHasCachedSnapshot: Boolean,
+        statusCode: Int
+    ) {
         val visitError = HttpError.from(statusCode)
 
         logEvent(
@@ -566,7 +574,10 @@ class Session(
         if (!isFeatureSupported(VISUAL_STATE_CALLBACK)) return
 
         context.runOnUiThread {
-            WebViewCompat.postVisualStateCallback(webView, visitIdentifier.toRequestId()) { requestId ->
+            WebViewCompat.postVisualStateCallback(
+                webView,
+                visitIdentifier.toRequestId()
+            ) { requestId ->
                 logEvent("visitVisualStateComplete", "visitIdentifier" to visitIdentifier)
 
                 if (visitIdentifier.toRequestId() == requestId) {
@@ -703,7 +714,8 @@ class Session(
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val location = request.url.toString()
             val isHttpRequest = request.isHttpGetRequest()
-            val isColdBootRedirect = isHttpRequest && isColdBooting && currentVisit?.location != location
+            val isColdBootRedirect =
+                isHttpRequest && isColdBooting && currentVisit?.location != location
             val shouldOverride = isReady || isColdBootRedirect
 
             // Don't allow onPageFinished to process its
@@ -735,15 +747,59 @@ class Session(
             return shouldOverride
         }
 
-        override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {
+        override fun onReceivedHttpAuthRequest(
+            view: WebView,
+            handler: HttpAuthHandler,
+            host: String,
+            realm: String
+        ) {
             callback { it.onReceivedHttpAuthRequest(handler, host, realm) }
         }
 
-        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-            return requestInterceptor.interceptRequest(request)
+        override fun shouldInterceptRequest(
+            view: WebView,
+            request: WebResourceRequest
+        ): WebResourceResponse? {
+            return request.url?.toString()?.let { handleRequest(it) }
         }
 
-        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceErrorCompat) {
+        override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse? {
+            return url?.let { handleRequest(it) }
+        }
+
+        private fun handleRequest(url: String): WebResourceResponse? {
+            return try {
+                // Create a URL and open a connection
+                val connection = URL(url).openConnection() as HttpURLConnection
+                connection.apply {
+                    // Add custom headers
+                    setRequestProperty("storefront-brand", "4now")
+                    setRequestProperty("kiosk", "4now")
+                    connect() // Connect to the URL
+                }
+
+                // Read the response headers
+                val contentType = connection.contentType ?: "text/plain"
+                val contentEncoding = connection.contentEncoding ?: "utf-8"
+
+                // Return the response as a WebResourceResponse
+                WebResourceResponse(
+                    contentType,
+                    contentEncoding,
+                    connection.inputStream
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // Optionally return a custom error page or response
+                null
+            }
+        }
+
+        override fun onReceivedError(
+            view: WebView,
+            request: WebResourceRequest,
+            error: WebResourceErrorCompat
+        ) {
             super.onReceivedError(view, request, error)
 
             if (request.isForMainFrame) {
@@ -755,7 +811,11 @@ class Session(
             }
         }
 
-        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+        override fun onReceivedHttpError(
+            view: WebView,
+            request: WebResourceRequest,
+            errorResponse: WebResourceResponse
+        ) {
             super.onReceivedHttpError(view, request, errorResponse)
 
             if (request.isForMainFrame) {
